@@ -112,8 +112,11 @@ jobs:
             exit 0
           fi
 
+          printf -v body "Update the production API image to \`ghcr.io/hiterm/bookshelf-api:%s@%s\`." \
+            "${VERSION}" "${DIGEST}"
+
           gh pr create \
             --base main \
             --head "${branch}" \
             --title "Deploy bookshelf-api ${VERSION}" \
-            --body "Update the production API image to `ghcr.io/hiterm/bookshelf-api:${VERSION}@${DIGEST}`."
+            --body "${body}"
