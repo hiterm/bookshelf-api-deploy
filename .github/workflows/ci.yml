@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions: {}
+
+jobs:
+  smoke-test:
+    name: Smoke test deployment image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    env:
+      DATABASE_URL: postgres://bookshelf:password@localhost:5432/bookshelf
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build deployment image
+        run: docker build --pull --file Dockerfile.vercel --tag bookshelf-api:deployment .
+
+      - name: Start PostgreSQL
+        run: sudo systemctl start postgresql.service
+
+      - name: Wait for PostgreSQL
+        run: |
+          for _ in {1..30}; do
+            if pg_isready; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::PostgreSQL did not become ready in time" >&2
+          exit 1
+
+      - name: Create database
+        run: |
+          sudo -u postgres psql \
+            --command="CREATE USER bookshelf WITH SUPERUSER PASSWORD 'password'" \
+            postgres
+          sudo -u postgres createdb --owner=bookshelf bookshelf
+
+      - name: Start API
+        run: |
+          docker run -d --name bookshelf-api --network=host \
+            -e PORT=8080 \
+            -e DATABASE_URL="${DATABASE_URL}" \
+            -e ALLOWED_ORIGINS=http://localhost:8080 \
+            -e JWT_AUDIENCE=test-audience \
+            -e JWT_DOMAIN=test-issuer.local \
+            -e JWKS_URL=http://localhost:9999/.well-known/jwks.json \
+            bookshelf-api:deployment
+
+          for _ in {1..60}; do
+            if curl -fs http://localhost:8080/health > /dev/null; then
+              echo "API is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "::error::API did not become ready in time" >&2
+          docker logs bookshelf-api
+          exit 1
+
+      - name: Show API logs
+        if: failure()
+        run: docker logs bookshelf-api || true
+
+      - name: Stop API
+        if: always()
+        run: docker rm --force bookshelf-api || true
