@@ -1,0 +1,117 @@
+name: Update API image
+
+on:
+  repository_dispatch:
+    types:
+      - api-released
+
+permissions: {}
+
+jobs:
+  update:
+    name: Update deployment image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate release payload
+        id: release
+        env:
+          VERSION: ${{ github.event.client_payload.version }}
+          DIGEST: ${{ github.event.client_payload.digest }}
+        run: |
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Invalid release version: ${VERSION}"
+            exit 1
+          fi
+
+          if [[ ! "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Invalid image digest: ${DIGEST}"
+            exit 1
+          fi
+
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Verify published image digest
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          EXPECTED_DIGEST: ${{ steps.release.outputs.digest }}
+        run: |
+          image="ghcr.io/hiterm/bookshelf-api:${VERSION}"
+          actual_digest=$(docker buildx imagetools inspect "${image}" | awk '$1 == "Digest:" { print $2; exit }')
+
+          if [[ -z "${actual_digest}" ]]; then
+            echo "::error::Could not resolve digest for ${image}"
+            exit 1
+          fi
+
+          if [[ "${actual_digest}" != "${EXPECTED_DIGEST}" ]]; then
+            echo "::error::Digest mismatch for ${image}: expected ${EXPECTED_DIGEST}, got ${actual_digest}"
+            exit 1
+          fi
+
+      - name: Update deployment manifest
+        id: manifest
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          DIGEST: ${{ steps.release.outputs.digest }}
+        run: |
+          printf 'FROM ghcr.io/hiterm/bookshelf-api:%s@%s\n' "${VERSION}" "${DIGEST}" > Dockerfile.vercel
+
+          if git diff --quiet -- Dockerfile.vercel; then
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "changed=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Generate GitHub App token
+        if: steps.manifest.outputs.changed == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.BOOKSHELF_DELIVERY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.BOOKSHELF_DELIVERY_APP_PRIVATE_KEY }}
+
+      - name: Create or update deployment pull request
+        if: steps.manifest.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+          DIGEST: ${{ steps.release.outputs.digest }}
+        run: |
+          branch="deploy/bookshelf-api-${VERSION}"
+
+          git config user.name "bookshelf-delivery[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "${branch}"
+          git add Dockerfile.vercel
+          git commit -m "Deploy bookshelf-api ${VERSION}"
+
+          gh auth setup-git
+          git push --force origin "HEAD:refs/heads/${branch}"
+
+          existing_pr=$(gh pr list \
+            --base main \
+            --head "${branch}" \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')
+
+          if [[ -n "${existing_pr}" ]]; then
+            echo "Updated existing pull request #${existing_pr}"
+            exit 0
+          fi
+
+          gh pr create \
+            --base main \
+            --head "${branch}" \
+            --title "Deploy bookshelf-api ${VERSION}" \
+            --body "Update the production API image to `ghcr.io/hiterm/bookshelf-api:${VERSION}@${DIGEST}`."
