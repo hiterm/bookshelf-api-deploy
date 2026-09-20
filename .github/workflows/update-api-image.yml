@@ -8,7 +8,9 @@ on:
 permissions: {}
 
 jobs:
-  update:
+  # secrets-outside-env: this trusted repository_dispatch job needs the GitHub App
+  # key to create or update deployment pull requests.
+  update: # zizmor: ignore[secrets-outside-env]
     name: Update deployment image
     runs-on: ubuntu-latest
     permissions:
