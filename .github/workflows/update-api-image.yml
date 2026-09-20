@@ -8,7 +8,9 @@ on:
 permissions: {}
 
 jobs:
-  update:
+  # secrets-outside-env: this trusted repository_dispatch job needs the GitHub App
+  # key to create or update deployment pull requests.
+  update: # zizmor: ignore[secrets-outside-env]
     name: Update deployment image
     runs-on: ubuntu-latest
     permissions:
@@ -110,8 +112,11 @@ jobs:
             exit 0
           fi
 
+          printf -v body "Update the production API image to \`ghcr.io/hiterm/bookshelf-api:%s@%s\`." \
+            "${VERSION}" "${DIGEST}"
+
           gh pr create \
             --base main \
             --head "${branch}" \
             --title "Deploy bookshelf-api ${VERSION}" \
-            --body "Update the production API image to `ghcr.io/hiterm/bookshelf-api:${VERSION}@${DIGEST}`."
+            --body "${body}"
