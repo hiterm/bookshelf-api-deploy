@@ -1,1 +1,1 @@
-FROM ghcr.io/hiterm/bookshelf-api:2.17.3@sha256:82932e7c05eb19b3143339774ddbd4b95347447dac0f4d0e7c9bf8c4f18ea295
+FROM ghcr.io/hiterm/bookshelf-api:2.17.6@sha256:466fdbffe8b72811fdf6f90d87d62a63c349f885f5f5562f7c7a7804e9f06127
