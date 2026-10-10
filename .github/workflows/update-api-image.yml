@@ -114,7 +114,7 @@ jobs:
 
           body_file=$(mktemp)
           trap 'rm -f "${body_file}"' EXIT
-          printf 'Update the production API image to `ghcr.io/hiterm/bookshelf-api:%s@%s`.\n' \
+          printf "Update the production API image to \`ghcr.io/hiterm/bookshelf-api:%s@%s\`.\n" \
             "${VERSION}" "${DIGEST}" > "${body_file}"
 
           if [[ -n "${existing_pr}" ]]; then
